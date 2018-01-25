@@ -33,7 +33,7 @@ router.use((req,res,next)=>{
 
 //展现login页面
 router.get('/login',(req,res)=>{
-	res.render('login',{error_msg:'登陆'});
+	res.render('login',{error_msg:'登陆', ref: req.query['ref']||''});
 })
 //提交登陆请求
 router.post('/login',(req,res)=>{
@@ -68,7 +68,7 @@ router.post('/login',(req,res)=>{
 	}
 
 	function showError(msg){
-	    res.render('login', {error_msg: msg,ref: req.query['ref']||''}});
+	    res.render('login', {error_msg: msg,ref: req.query['ref']||''});
 	}
 
 	function setToken(id){
@@ -85,7 +85,7 @@ router.post('/login',(req,res)=>{
 				if(!ref){
 					ref='';
 				}
-				res.redirect('/admin/'+ref);
+				res.redirect('/admin'+ref);
 			}
 		})
 	}
@@ -95,100 +95,193 @@ router.get('/', (req, res)=>{
   res.redirect('/admin/house');
 });
 
+
+
+
+
+
 //获取
-router.get('/house',(req,res)=>{
-	//分页
-	const size = 10;
-	let page = req.query.page;
-	if(!page){
-		page=1;
-	}else if(!/^[1-9]\d*$/.test(page)){
-		page=1;
+router.get('/:table',(req,res)=>{
+
+	const {table}=req.params;
+
+	if(!config[`show_in_admin_${table}`]){
+		res.sendStatus(404);
+	}else{
+		let aField=[];
+    	let jsonShowName={};
+    	config[`show_in_admin_${table}`].split(',').forEach(str=>{
+	      let [field, showName]=str.split(':');
+
+	      aField.push(field);
+	      jsonShowName[field]=showName;     //{'title': '标题', 'ave_price': '均价'..}
+	    });
+	    	//分页
+		const size = 10;
+		let page = req.query.page;
+		if(!page){
+			page=1;
+		}else if(!/^[1-9]\d*$/.test(page)){
+			page=1;
+		}
+
+		let start = (page-1)*size;
+
+		//搜索
+		let like_seg = '1=1';
+		if(req.query.keyword){
+			let keys = req.query.keyword.split(/\s+/g);
+
+			like_seg = keys.map(item=>`title LIKE '%${item}%'`).join(' OR ');
+		}
+
+		//1.获取数据
+		req.db.query(`SELECT ${aField.join(',')} FROM ${table}_table WHERE ${like_seg} LIMIT ${start}, ${size}`,(err,result)=>{
+			if(err){
+				res.sendStatus(500);
+			}else{
+				req.db.query(`SELECT COUNT(*) AS c FROM ${table}_table WHERE ${like_seg}`,(err,data)=>{
+					if(err){
+						res.sendStatus(500);
+					}else if(data.length==0){
+						res.sendStatus(500);
+					}else{
+						res.render('index',{
+							data:result,
+							show_page_count:9,
+							cur_page:parseInt(page),
+							page_count:Math.ceil(data[0].c/size),
+							keyword:req.query.keyword,
+							jsonShowName,
+              				table
+						})
+					}
+				})
+			}
+		})
 	}
+})
 
-	let start = (page-1)*size;
+//添加修改
+router.post('/:table',(req,res)=>{
+	const {table}=req.params;
 
-	//搜索
-	let like_seg = '1=1';
-	if(req.query.keyword){
-		let keys = req.query.keyword.split(/\s+/g);
-
-		like_seg = keys.map(item=>`title LIKE '%${item}%'`).join(' OR ');
-	}
-
-	//1.获取数据
-	req.db.query(`SELECT ID, title,ave_price,tel FROM house_table WHERE ${like_seg} LIMIT ${start}, ${size}`,(err,house_data)=>{
-		if(err){
-			res.sendStatus(500);
+	if(req.body['is_mod']=='true'){
+		if(!config[`insert_fields_${table}`]){
+			res.sendStatus(404);
 		}else{
-			req.db.query(`SELECT COUNT(*) AS c FROM house_table WHERE ${like_seg}`,(err,data)=>{
+			let fields = config[`insert_fields_${table}`].split(',');
+			config['disallow_modify_fields'].split(',').forEach(name=>{
+				fields = fields.filter(item=>item!=name);
+			})
+
+			let arr = [];
+			fields.forEach(key=>{
+				arr.push(`${key}='${req.body[key]}'`)
+			})
+
+			let sql=`UPDATE ${table}_table SET ${arr.join(',')} WHERE ID='${req.body['old_id']}'`;
+
+			req.db.query(spl,err=>{
 				if(err){
 					res.sendStatus(500);
-				}else if(data.length==0){
-					res.sendStatus(500);
 				}else{
-					res.render('index',{
-						data:house_data,
-						show_page_count:9,
-						cur_page:parseInt(page),
-						page_count:Math.ceil(data[0].c/size),
-						keyword:req.query.keyword
-					})
+					res.redirect(`/admin/${table}`);
 				}
 			})
 		}
-	})
-})
+	}else{
+	  const file_infos = {
+			house: {
+		        'main_img': {
+		          path: 'main_img_path',
+		          real_path: 'main_img_real_path',
+		          type: 'single'
+		        },
+		        'img': {
+		          path: 'img_paths',
+		          real_path: 'img_real_paths',
+		          type: 'array'
+		        },
+		        'property_img': {
+		          path: 'property_img_paths',
+		          real_path: 'property_img_real_paths',
+		          type: 'array'
+		        },
+		      },
+		      broker: {
+		        'img': {
+		          path: 'img_path',
+		          real_path: 'img_real_path',
+		          type: 'single'
+		        }
+		      },
+		      ad: {
+		        'img': {
+		          path: 'img_path',
+		          real_path: 'img_real_path',
+		          type: 'single'
+		        }
+		      }
+		}
 
-router.post('/house',(req,res)=>{
-	req.body['sale_time']=Math.floor(new Date(req.body['sale_time']).getTime()/1000);
-  	req.body['submit_time']=Math.floor(new Date(req.body['submit_time']).getTime()/1000);
+		const file_info=file_infos[table];
 
-  	let aImgPath=[];
-  	let aImgRealPath=[];
-  	
-  	for (var i = 0; i < req.files.length; i++) {
-  		switch(req.files[i].fieldname){
-  			case 'main_img':
-  				req.body['main_img_path']=req.files[i].filename;
-  				req.body['main_img_real_path']=req.files[i].path.replace(/\\/g,'\\\\');
-  				break;
-  			case 'img':
-	          aImgPath.push(req.files[i].filename);
-	          aImgRealPath.push(req.files[i].path.replace(/\\/g, '\\\\'));
-	          break;
-	        case 'property_img':
-	          req.body['property_img_paths']=req.files[i].filename;
-	          req.body['property_img_real_paths']=req.files[i].path.replace(/\\/g, '\\\\');
-	          break;
-  		}
-  	}
+		const file_paths = {};
 
-  	req.body['ID']=common.uuid();
-  	req.body['admin_ID']=req.admin_ID;
+		const file_real_paths={};
 
-  	req.body['img_paths']=aImgPath.join(',');
-  	req.body['img_real_paths']=aImgRealPath.join(',');
+		for (var i = 0; i < req.files.length; i++) {
+			let name = req.files[i].fieldname;
 
+			if(file_info[name]){
+				if(!file_paths[name]){
+					file_paths[name]=[];
+					file_real_paths[name]=[];
+				}
 
-  	let arrField = [];
-  	let arrValue = [];
+				file_paths[name].push(req.files[i].filename);
+				file_real_paths[name].push(req.files[i].path.replace(/\\/g,'\\\\'));
+			}
 
-  	for(let name in req.body){
-  		arrField.push(name);
-  		arrValue.push(req.body[name]);
-  	}
+		}
 
-  	let sql = `INSERT INTO house_table (${arrField.join(',')}) VALUES('${arrValue.join("','")}')`;
+		for(let name in file_paths){
+			if(file_info[name].type == 'single'){
+				req.body[file_info[name].path]=file_paths[name][0];
+				req.body[file_info[name].real_path] = file_real_paths[name][0];
+			}else{
+				req.body[file_info[name].path]=file_paths[name].join(',');
+        		req.body[file_info[name].real_path]=file_real_paths[name].join(','); 
+			}
+		}
 
-  	req.db.query(sql,err=>{
-  		if(err){
-  			res.sendStatus(500);
-  		}else{
-  			res.redirect('/admin/house');
-  		}
-  	})
+		req.body['ID']=common.uuid();
 
+		//看看
+	    let arrField=[];
+	    let arrValue=[];
+
+	    config[`insert_fields_${table}`].split(',').forEach(name=>{
+	      arrField.push(name);
+	      arrValue.push(req.body[name]);
+	    });
+
+	    arrField.push('create_time');
+    	arrValue.push(Math.floor(new Date().getTime()/1000));
+
+    	console.log(arrField[10],typeof arrValue[10])
+    	let sql=`INSERT INTO ${table}_table (${arrField.join(',')}) VALUES('${arrValue.join("','")}')`;
+
+    	req.db.query(sql, err=>{
+	      if(err){
+	        console.log(err);
+	        res.sendStatus(500);
+	      }else{
+	        res.redirect(`/admin/${table}`);
+	      }
+	    });
+	}
 })
 
 //删除
@@ -283,14 +376,15 @@ router.get('/house/delete',(req,res)=>{
 })
 
 //接口
-router.get('/house/get_data',(req,res)=>{
-	let id = req.query.id;
+router.get('/:table/get_data',(req,res)=>{
+	const {table} = req.params;
+	const id = req.query.id;
 	if(!id){
 		res.sendStatus(404);
 	}else if(!/^[\da-f]{32}$/.test(id)){
 		res.sendStatus(404);
 	}else{
-		req.db.query(`SELECT * FROM house_table WHERE ID='${id}'`,(err,data)=>{
+		req.db.query(`SELECT * FROM ${table}_table WHERE ID='${id}'`,(err,data)=>{
 			if(err){
 				res.sendStatus(500);
 			}else if(data.length==0){

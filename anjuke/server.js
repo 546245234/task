@@ -41,7 +41,7 @@ server.set('views','./template');
 
 //处理请求
 server.use('/admin/',require('./routers/admin'));
-// server.use('/',require('./routers/www'));
+server.use('/',require('./routers/www'));
 
 //静态文件
 server.use(express.static('./www/'));
